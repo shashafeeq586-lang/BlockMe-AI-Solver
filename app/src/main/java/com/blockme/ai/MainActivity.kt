@@ -1,3 +1,4 @@
+
 package com.blockme.ai
 
 import android.os.Bundle
@@ -13,10 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
 class MainActivity : ComponentActivity() {
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         setContent {
             MaterialTheme {
                 SolverScreen()
@@ -25,15 +24,11 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SolverScreen() {
-
     var status by remember {
         mutableStateOf("AI Solver প্রস্তুত")
-    }
-
-    var isRunning by remember {
-        mutableStateOf(false)
     }
 
     val features = listOf(
@@ -49,13 +44,10 @@ fun SolverScreen() {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text("BlockMe AI Solver")
-                }
+                title = { Text("BlockMe AI Solver") }
             )
         }
     ) { padding ->
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
@@ -64,7 +56,6 @@ fun SolverScreen() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-
             item {
                 Text(
                     text = status,
@@ -76,7 +67,6 @@ fun SolverScreen() {
                 Button(
                     onClick = {
                         status = "Screen detection এখনো যুক্ত করা হয়নি"
-                        isRunning = false
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -88,7 +78,6 @@ fun SolverScreen() {
                 OutlinedButton(
                     onClick = {
                         status = "AI Solver বন্ধ"
-                        isRunning = false
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -104,9 +93,7 @@ fun SolverScreen() {
             }
 
             items(features) { feature ->
-                Card(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                Card(modifier = Modifier.fillMaxWidth()) {
                     Text(
                         text = "✓  $feature",
                         modifier = Modifier.padding(16.dp)
