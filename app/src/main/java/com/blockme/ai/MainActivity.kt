@@ -4,109 +4,147 @@ package com.blockme.ai
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                SolverScreen()
+                BlockMeHome()
             }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SolverScreen() {
-    var status by remember {
-        mutableStateOf("AI Solver প্রস্তুত")
-    }
+fun BlockMeHome() {
+    var running by remember { mutableStateOf(false) }
 
-    val features = listOf(
-        "8 × 8 Board Detection",
-        "76 Block Shape Database",
-        "Four Direction Rotation",
-        "Multi-Line Clear Strategy",
-        "Large Block Space Reservation",
-        "Automatic Move Planning",
-        "Move Verification"
-    )
+    val blue = Color(0xFF087CEB)
+    val green = Color(0xFF20D900)
+    val red = Color(0xFFFF2525)
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("BlockMe AI Solver") }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color(0xFF0879E8),
+                        Color(0xFF53D9FF),
+                        Color(0xFF087C39),
+                        Color(0xFF063E24)
+                    )
+                )
             )
-        }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(20.dp),
+            .padding(20.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.SpaceEvenly
         ) {
-            item {
-                Text(
-                    text = status,
-                    style = MaterialTheme.typography.titleMedium
-                )
-            }
-
-            item {
-                Button(
-                    onClick = {
-                        status = "Screen detection এখনো যুক্ত করা হয়নি"
-                    },
-                    modifier = Modifier.fillMaxWidth()
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.TopEnd
+            ) {
+                Surface(
+                    color = Color(0xFF071C4B),
+                    shape = RoundedCornerShape(30.dp),
+                    border = androidx.compose.foundation.BorderStroke(
+                        2.dp, Color(0xFFFFD54F)
+                    )
                 ) {
-                    Text("Start AI Solver")
-                }
-            }
-
-            item {
-                OutlinedButton(
-                    onClick = {
-                        status = "AI Solver বন্ধ"
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Stop AI")
-                }
-            }
-
-            item {
-                Text(
-                    text = "AI Features",
-                    style = MaterialTheme.typography.titleLarge
-                )
-            }
-
-            items(features) { feature ->
-                Card(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = "✓  $feature",
-                        modifier = Modifier.padding(16.dp)
+                        "♛  SIAM",
+                        modifier = Modifier.padding(
+                            horizontal = 22.dp,
+                            vertical = 9.dp
+                        ),
+                        color = Color.White,
+                        fontSize = 23.sp,
+                        fontWeight = FontWeight.ExtraBold
                     )
                 }
             }
 
-            item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("👑", fontSize = 65.sp)
                 Text(
-                    text = "পরবর্তী ধাপে Board Scanner ও Solver Engine যুক্ত হবে।",
-                    style = MaterialTheme.typography.bodyMedium
+                    "BlockMe",
+                    fontSize = 43.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White
+                )
+                Text(
+                    "AI Solver",
+                    fontSize = 31.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color(0xFFFFE082)
+                )
+                Text(
+                    "◆  ◆  ◆  ◆",
+                    color = Color(0xFFFFD740),
+                    fontSize = 23.sp
                 )
             }
+
+            Button(
+                onClick = { running = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp),
+                shape = RoundedCornerShape(50.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = green
+                ),
+                elevation = ButtonDefaults.buttonElevation(8.dp)
+            ) {
+                Text(
+                    "▶   START AI",
+                    fontSize = 29.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White
+                )
+            }
+
+            Button(
+                onClick = { running = false },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp),
+                shape = RoundedCornerShape(50.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = red
+                ),
+                elevation = ButtonDefaults.buttonElevation(8.dp)
+            ) {
+                Text(
+                    "■   STOP AI",
+                    fontSize = 29.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color.White
+                )
+            }
+
+            Text(
+                if (running) "AI is selected to start" else "BlockMe AI Solver",
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
