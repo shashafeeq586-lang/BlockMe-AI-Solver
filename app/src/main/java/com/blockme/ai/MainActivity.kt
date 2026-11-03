@@ -1,9 +1,13 @@
-
 package com.blockme.ai
 
+import android.app.Activity
+import android.content.Context
+import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,23 +20,62 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
+
+    private val screenCaptureLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+
+            if (result.resultCode == Activity.RESULT_OK && result.data != null) {
+                val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                    putExtra("resultCode", result.resultCode)
+                    putExtra("data", result.data)
+                }
+
+                ContextCompat.startForegroundService(this, serviceIntent)
+                captureApproved = true
+            } else {
+                captureApproved = false
+            }
+        }
+
+    private var captureApproved by mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
         setContent {
             MaterialTheme {
-                BlockMeHome()
+                BlockMeHome(
+                    onStart = {
+                        val manager = getSystemService(
+                            Context.MEDIA_PROJECTION_SERVICE
+                        ) as MediaProjectionManager
+
+                        screenCaptureLauncher.launch(
+                            manager.createScreenCaptureIntent()
+                        )
+                    },
+                    onStop = {
+                        stopService(
+                            Intent(this, ScreenCaptureService::class.java)
+                        )
+                        captureApproved = false
+                    },
+                    isRunning = captureApproved
+                )
             }
         }
     }
 }
 
 @Composable
-fun BlockMeHome() {
-    var running by remember { mutableStateOf(false) }
-
-    val blue = Color(0xFF087CEB)
+fun BlockMeHome(
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    isRunning: Boolean
+) {
     val green = Color(0xFF20D900)
     val red = Color(0xFFFF2525)
 
@@ -102,7 +145,7 @@ fun BlockMeHome() {
             }
 
             Button(
-                onClick = { running = true },
+                onClick = onStart,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(100.dp),
@@ -121,7 +164,7 @@ fun BlockMeHome() {
             }
 
             Button(
-                onClick = { running = false },
+                onClick = onStop,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(100.dp),
@@ -140,7 +183,7 @@ fun BlockMeHome() {
             }
 
             Text(
-                if (running) "AI is selected to start" else "BlockMe AI Solver",
+                if (isRunning) "Screen Capture Started" else "BlockMe AI Solver",
                 color = Color.White,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
