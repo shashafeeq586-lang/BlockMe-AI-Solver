@@ -13,9 +13,9 @@ data class BoardScanResult(
 
 object BoardDetection {
     private const val SIZE = 8
-    private const val LEFT_RATIO = 0.0615f
-    private const val TOP_RATIO = 0.1191f
-    private const val WIDTH_RATIO = 0.874f
+    private const val LEFT_RATIO = 0.0649f
+private const val TOP_RATIO = 0.2663f
+private const val WIDTH_RATIO = 0.8745f
 
     fun scan(bitmap: Bitmap): BoardScanResult? {
         if (bitmap.width < 100 || bitmap.height < 100) return null
