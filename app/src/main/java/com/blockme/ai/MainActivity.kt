@@ -1,4 +1,3 @@
-
 package com.blockme.ai
 
 import android.app.Activity
@@ -8,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
     private var empty by mutableIntStateOf(64)
     private var confidence by mutableFloatStateOf(0f)
     private var scanMessage by mutableStateOf("Waiting for board scan...")
+    private var aiStatus by mutableStateOf("AI is waiting")
     private var boardData by mutableStateOf("")
     private var pieceCount by mutableIntStateOf(0)
     private var piecesData by mutableStateOf("")
@@ -54,6 +55,9 @@ class MainActivity : ComponentActivity() {
             piecesData = intent.getStringExtra("pieces") ?: ""
             pieceConfidence = intent.getFloatExtra("pieceConfidence", 0f)
 
+            aiStatus = intent.getStringExtra("aiStatus")
+                ?: "AI status unavailable"
+
             scanMessage = "Scan result received"
         }
     }
@@ -71,11 +75,14 @@ class MainActivity : ComponentActivity() {
                     }
 
                 ContextCompat.startForegroundService(this, serviceIntent)
+
                 captureApproved = true
                 scanMessage = "Scanning screen..."
+                aiStatus = "AI is analyzing the board"
             } else {
                 captureApproved = false
                 scanMessage = "Screen capture permission denied"
+                aiStatus = "AI stopped"
             }
         }
 
@@ -107,12 +114,19 @@ class MainActivity : ComponentActivity() {
                         )
                         captureApproved = false
                         scanMessage = "Screen capture stopped"
+                        aiStatus = "AI stopped"
+                    },
+                    onAccessibility = {
+                        startActivity(
+                            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                        )
                     },
                     isRunning = captureApproved,
                     occupied = occupied,
                     empty = empty,
                     confidence = confidence,
                     scanMessage = scanMessage,
+                    aiStatus = aiStatus,
                     boardData = boardData,
                     pieceCount = pieceCount,
                     piecesData = piecesData,
@@ -132,11 +146,13 @@ class MainActivity : ComponentActivity() {
 fun BlockMeHome(
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onAccessibility: () -> Unit,
     isRunning: Boolean,
     occupied: Int,
     empty: Int,
     confidence: Float,
     scanMessage: String,
+    aiStatus: String,
     boardData: String,
     pieceCount: Int,
     piecesData: String,
@@ -163,8 +179,7 @@ fun BlockMeHome(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 8.dp)
-                .padding(bottom = 8.dp),
+                .padding(vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -210,9 +225,10 @@ fun BlockMeHome(
 
             Button(
                 onClick = onStart,
+                enabled = !isRunning,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(78.dp),
+                    .height(70.dp),
                 shape = RoundedCornerShape(50.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = green
@@ -220,7 +236,7 @@ fun BlockMeHome(
             ) {
                 Text(
                     "▶   START AI",
-                    fontSize = 25.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
                     color = Color.White
                 )
@@ -228,9 +244,10 @@ fun BlockMeHome(
 
             Button(
                 onClick = onStop,
+                enabled = isRunning,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(78.dp),
+                    .height(70.dp),
                 shape = RoundedCornerShape(50.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = red
@@ -238,9 +255,20 @@ fun BlockMeHome(
             ) {
                 Text(
                     "■   STOP AI",
-                    fontSize = 25.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Black,
                     color = Color.White
+                )
+            }
+
+            OutlinedButton(
+                onClick = onAccessibility,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "OPEN ACCESSIBILITY SETTINGS",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
                 )
             }
 
@@ -258,9 +286,25 @@ fun BlockMeHome(
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Text(
-                        "SCAN RESULT",
+                        "AI STATUS",
                         color = Color(0xFFFFE082),
                         fontSize = 20.sp,
+                        fontWeight = FontWeight.Black
+                    )
+
+                    Text(
+                        aiStatus,
+                        color = Color(0xFF80FF80),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    HorizontalDivider(color = Color.Gray)
+
+                    Text(
+                        "SCAN RESULT",
+                        color = Color(0xFFFFE082),
+                        fontSize = 19.sp,
                         fontWeight = FontWeight.Black
                     )
 
@@ -273,19 +317,19 @@ fun BlockMeHome(
                     Text(
                         "Occupied: $occupied / 64",
                         color = Color.White,
-                        fontSize = 17.sp
+                        fontSize = 16.sp
                     )
 
                     Text(
                         "Empty: $empty / 64",
                         color = Color.White,
-                        fontSize = 17.sp
+                        fontSize = 16.sp
                     )
 
                     Text(
                         "Board confidence: ${"%.1f".format(confidence * 100)}%",
                         color = Color.White,
-                        fontSize = 15.sp
+                        fontSize = 14.sp
                     )
 
                     if (boardData.length == 64) {
@@ -319,30 +363,27 @@ fun BlockMeHome(
                     Text(
                         "Detected pieces: $pieceCount / 3",
                         color = Color.White,
-                        fontSize = 17.sp
+                        fontSize = 16.sp
                     )
 
                     Text(
                         "Piece confidence: ${"%.1f".format(pieceConfidence * 100)}%",
                         color = Color.White,
-                        fontSize = 15.sp
+                        fontSize = 14.sp
                     )
 
                     if (piecesData.isNotBlank()) {
-                        val pieces = piecesData.split("|")
-
-                        pieces.forEachIndexed { index, piece ->
-                            val cells = piece.split(";")
-                                .mapNotNull { value ->
-                                    val parts = value.split(",")
-                                    if (parts.size != 2) null
-                                    else {
-                                        val row = parts[0].toIntOrNull()
-                                        val col = parts[1].toIntOrNull()
-                                        if (row == null || col == null) null
-                                        else Cell(row, col)
-                                    }
+                        piecesData.split("|").forEachIndexed { index, piece ->
+                            val cells = piece.split(";").mapNotNull { value ->
+                                val parts = value.split(",")
+                                if (parts.size != 2) null
+                                else {
+                                    val row = parts[0].toIntOrNull()
+                                    val col = parts[1].toIntOrNull()
+                                    if (row == null || col == null) null
+                                    else Cell(row, col)
                                 }
+                            }
 
                             Text(
                                 "Piece ${index + 1}: ${cells.size} cells",
