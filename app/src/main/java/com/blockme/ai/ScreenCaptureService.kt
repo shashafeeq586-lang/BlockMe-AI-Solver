@@ -1,3 +1,4 @@
+
 package com.blockme.ai
 
 import android.app.Notification
@@ -6,9 +7,11 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
@@ -17,15 +20,26 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.DisplayMetrics
+import android.util.Log
 import android.view.WindowManager
+import java.nio.ByteBuffer
 
 class ScreenCaptureService : Service() {
+
+    companion object {
+        private const val TAG = "BlockMeAI"
+        private const val CHANNEL_ID = "blockme_capture"
+        private const val NOTIFICATION_ID = 101
+        private const val SCAN_INTERVAL = 500L
+    }
 
     private var mediaProjection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var imageReader: ImageReader? = null
 
     private val handler = Handler(Looper.getMainLooper())
+    private var lastScanTime = 0L
+    private var isStopping = false
 
     override fun onStartCommand(
         intent: Intent?,
@@ -36,7 +50,7 @@ class ScreenCaptureService : Service() {
         val resultCode = intent?.getIntExtra("resultCode", 0) ?: 0
 
         val data: Intent? = if (Build.VERSION.SDK_INT >= 33) {
-            intent?.getParcelableExtra("data", Intent::class.java)
+            intent.getParcelableExtra("data", Intent::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent?.getParcelableExtra("data")
@@ -49,15 +63,15 @@ class ScreenCaptureService : Service() {
 
         createNotificationChannel()
 
-        val notification = Notification.Builder(this, "blockme_capture")
+        val notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("BlockMe AI Solver")
-            .setContentText("Screen capture is running")
+            .setContentText("Screen capture and board scanning are running")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
 
         startForeground(
-            101,
+            NOTIFICATION_ID,
             notification,
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         )
@@ -70,6 +84,7 @@ class ScreenCaptureService : Service() {
             mediaProjection = manager.getMediaProjection(resultCode, data)
 
             val metrics = DisplayMetrics()
+
             @Suppress("DEPRECATION")
             (getSystemService(WINDOW_SERVICE) as WindowManager)
                 .defaultDisplay.getRealMetrics(metrics)
@@ -86,13 +101,33 @@ class ScreenCaptureService : Service() {
             )
 
             imageReader?.setOnImageAvailableListener({ reader ->
-                val image = reader.acquireLatestImage()
-                image?.close()
+                val image = try {
+                    reader.acquireLatestImage()
+                } catch (e: Exception) {
+                    Log.e(TAG, "Image acquisition failed", e)
+                    null
+                }
+
+                if (image != null) {
+                    try {
+                        val now = System.currentTimeMillis()
+
+                        if (now - lastScanTime >= SCAN_INTERVAL) {
+                            lastScanTime = now
+                            scanImage(image)
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Board scan failed", e)
+                    } finally {
+                        image.close()
+                    }
+                }
             }, handler)
 
             mediaProjection?.registerCallback(
                 object : MediaProjection.Callback() {
                     override fun onStop() {
+                        Log.i(TAG, "Screen capture stopped")
                         stopSelf()
                     }
                 },
@@ -110,17 +145,84 @@ class ScreenCaptureService : Service() {
                 handler
             )
 
+            Log.i(TAG, "Screen capture started: ${width}x${height}")
+
         } catch (e: Exception) {
+            Log.e(TAG, "Could not start screen capture", e)
             stopSelf()
         }
 
         return START_NOT_STICKY
     }
 
+    private fun scanImage(image: Image) {
+        val bitmap = imageToBitmap(image) ?: return
+
+        try {
+            val result = BoardDetection.scan(bitmap)
+
+            if (result != null) {
+                Log.i(
+                    TAG,
+                    "Board detected: occupied=${result.occupiedCount}, " +
+                        "empty=${result.emptyCount}, " +
+                        "confidence=${result.confidence}"
+                )
+            } else {
+                Log.w(TAG, "Board detection returned no result")
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
+    private fun imageToBitmap(image: Image): Bitmap? {
+        val plane = image.planes.firstOrNull() ?: return null
+
+        val buffer: ByteBuffer = plane.buffer
+        val pixelStride = plane.pixelStride
+        val rowStride = plane.rowStride
+
+        if (pixelStride <= 0 || rowStride <= 0) return null
+
+        val paddedWidth = rowStride / pixelStride
+
+        if (paddedWidth < image.width) return null
+
+        val paddedBitmap = Bitmap.createBitmap(
+            paddedWidth,
+            image.height,
+            Bitmap.Config.ARGB_8888
+        )
+
+        return try {
+            buffer.rewind()
+            paddedBitmap.copyPixelsFromBuffer(buffer)
+
+            if (paddedWidth == image.width) {
+                paddedBitmap
+            } else {
+                val cropped = Bitmap.createBitmap(
+                    paddedBitmap,
+                    0,
+                    0,
+                    image.width,
+                    image.height
+                )
+                paddedBitmap.recycle()
+                cropped
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Image conversion failed", e)
+            paddedBitmap.recycle()
+            null
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
-                "blockme_capture",
+                CHANNEL_ID,
                 "BlockMe Screen Capture",
                 NotificationManager.IMPORTANCE_LOW
             )
@@ -134,15 +236,22 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onDestroy() {
-        virtualDisplay?.release()
-        imageReader?.close()
-        mediaProjection?.stop()
+        if (!isStopping) {
+            isStopping = true
 
-        virtualDisplay = null
-        imageReader = null
-        mediaProjection = null
+            imageReader?.setOnImageAvailableListener(null, null)
+
+            virtualDisplay?.release()
+            imageReader?.close()
+            mediaProjection?.stop()
+
+            virtualDisplay = null
+            imageReader = null
+            mediaProjection = null
+        }
 
         super.onDestroy()
+        Log.i(TAG, "BlockMe AI service destroyed")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
