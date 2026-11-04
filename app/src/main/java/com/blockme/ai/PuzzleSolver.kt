@@ -1,4 +1,3 @@
-
 package com.blockme.ai
 
 data class Cell(val row: Int, val col: Int)
@@ -19,6 +18,11 @@ object PuzzleSolver {
     private const val SIZE = 8
     private const val BEAM_WIDTH = 350
 
+    private data class RotatedShape(
+        val degrees: Int,
+        val cells: List<Cell>
+    )
+
     private data class State(
         val board: Array<BooleanArray>,
         val moves: List<Move>,
@@ -38,9 +42,13 @@ object PuzzleSolver {
         require(pieces.size == 3)
         require(pieces.all { it.cells.isNotEmpty() })
 
-        val initialBoard = Array(SIZE) { r ->
-            BooleanArray(SIZE) { c -> inputBoard[r][c] }
+        val initialBoard = Array(SIZE) { row ->
+            BooleanArray(SIZE) { col ->
+                inputBoard[row][col]
+            }
         }
+
+        val shapeOptions = pieces.map { rotations(it) }
 
         var beam = listOf(
             State(
@@ -56,16 +64,20 @@ object PuzzleSolver {
         var best: State? = null
 
         for (depth in pieces.indices) {
+
             val next = mutableListOf<State>()
 
             for (state in beam) {
                 for (pieceIndex in state.remaining) {
 
-                    val shapes = rotations(pieces[pieceIndex])
+                    for (rotated in shapeOptions[pieceIndex]) {
 
-                    for ((rotation, shape) in shapes.withIndex()) {
-                        for (row in 0 until SIZE) {
-                            for (col in 0 until SIZE) {
+                        val shape = rotated.cells
+                        val maxRow = shape.maxOf { it.row }
+                        val maxCol = shape.maxOf { it.col }
+
+                        for (row in 0..(SIZE - 1 - maxRow)) {
+                            for (col in 0..(SIZE - 1 - maxCol)) {
 
                                 if (!canPlace(
                                         state.board,
@@ -86,37 +98,35 @@ object PuzzleSolver {
                                     else 0
 
                                 val newRemaining =
-                                    state.remaining - pieceIndex
+                                    state.remaining.filter {
+                                        it != pieceIndex
+                                    }
 
-                                val largestSize =
-                                    pieces.maxOf { it.cells.size }
-
+                                // বড় Piece আগে বসালে সামান্য অগ্রাধিকার।
                                 val orderBonus =
                                     state.orderBonus +
-                                    (
-                                        pieces[pieceIndex].cells.size *
-                                        (pieces.size - depth) * 20
-                                    )
+                                    pieces[pieceIndex].cells.size *
+                                    (pieces.size - depth) * 20
 
                                 val move = Move(
                                     pieceIndex = pieceIndex,
                                     row = row,
                                     col = col,
-                                    rotation = rotation * 90,
+                                    rotation = rotated.degrees,
                                     linesCleared = cleared
                                 )
 
-                                val candidate = State(
-                                    board = newBoard,
-                                    moves = state.moves + move,
-                                    remaining = newRemaining,
-                                    totalCleared =
-                                        state.totalCleared + cleared,
-                                    combo = newCombo,
-                                    orderBonus = orderBonus
+                                next.add(
+                                    State(
+                                        board = newBoard,
+                                        moves = state.moves + move,
+                                        remaining = newRemaining,
+                                        totalCleared =
+                                            state.totalCleared + cleared,
+                                        combo = newCombo,
+                                        orderBonus = orderBonus
+                                    )
                                 )
-
-                                next.add(candidate)
                             }
                         }
                     }
@@ -127,37 +137,20 @@ object PuzzleSolver {
 
             beam = next
                 .sortedByDescending {
-                    evaluate(it, pieces)
+                    finalScore(it, pieces)
                 }
                 .take(BEAM_WIDTH)
 
-            val candidate = beam.maxByOrNull {
-                finalScore(it, pieces)
+            for (candidate in beam) {
+                val previous = best
+
+                if (
+                    previous == null ||
+                    isBetter(candidate, previous, pieces)
+                ) {
+                    best = candidate
+                }
             }
-
-            if (
-                candidate != null &&
-                (
-                    best == null ||
-                    isBetter(candidate, best!!, pieces)
-                )
-            ) {
-                best = candidate
-            }
-        }
-
-        val finalCandidate = beam.maxByOrNull {
-            finalScore(it, pieces)
-        }
-
-        if (
-            finalCandidate != null &&
-            (
-                best == null ||
-                isBetter(finalCandidate, best!!, pieces)
-            )
-        ) {
-            best = finalCandidate
         }
 
         val result = best ?: return null
@@ -195,6 +188,7 @@ object PuzzleSolver {
         state: State,
         pieces: List<Piece>
     ): Int {
+
         return state.moves.size * 100000 +
             state.totalCleared * 50000 +
             state.combo * 10000 +
@@ -202,20 +196,19 @@ object PuzzleSolver {
             evaluateBoard(state.board)
     }
 
-    private fun evaluate(
-        state: State,
-        pieces: List<Piece>
-    ): Int {
-        return finalScore(state, pieces)
-    }
+    private fun rotations(piece: Piece): List<RotatedShape> {
 
-    private fun rotations(piece: Piece): List<List<Cell>> {
-        val result = mutableListOf<List<Cell>>()
+        val result = mutableListOf<RotatedShape>()
         var current = normalize(piece.cells)
 
-        repeat(4) {
-            if (current !in result) {
-                result.add(current)
+        repeat(4) { turn ->
+            if (result.none { it.cells == current }) {
+                result.add(
+                    RotatedShape(
+                        degrees = turn * 90,
+                        cells = current
+                    )
+                )
             }
 
             current = normalize(
@@ -229,12 +222,16 @@ object PuzzleSolver {
     }
 
     private fun normalize(cells: List<Cell>): List<Cell> {
+
         val minRow = cells.minOf { it.row }
         val minCol = cells.minOf { it.col }
 
         return cells
             .map {
-                Cell(it.row - minRow, it.col - minCol)
+                Cell(
+                    it.row - minRow,
+                    it.col - minCol
+                )
             }
             .distinct()
             .sortedWith(
@@ -250,9 +247,9 @@ object PuzzleSolver {
         col: Int
     ): Boolean {
 
-        return shape.all {
-            val r = row + it.row
-            val c = col + it.col
+        return shape.all { cell ->
+            val r = row + cell.row
+            val c = col + cell.col
 
             r in 0 until SIZE &&
                 c in 0 until SIZE &&
@@ -313,7 +310,7 @@ object PuzzleSolver {
             occupied += filled
 
             if (filled == SIZE - 1) {
-                almostComplete += 1
+                almostComplete++
             }
         }
 
@@ -325,7 +322,7 @@ object PuzzleSolver {
             }
 
             if (filled == SIZE - 1) {
-                almostComplete += 1
+                almostComplete++
             }
         }
 
