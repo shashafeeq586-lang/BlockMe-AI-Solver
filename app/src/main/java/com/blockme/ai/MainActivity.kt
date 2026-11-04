@@ -37,16 +37,24 @@ class MainActivity : ComponentActivity() {
     private var confidence by mutableFloatStateOf(0f)
     private var scanMessage by mutableStateOf("Waiting for board scan...")
     private var boardData by mutableStateOf("")
+    private var pieceCount by mutableIntStateOf(0)
+    private var piecesData by mutableStateOf("")
+    private var pieceConfidence by mutableFloatStateOf(0f)
 
     private val scanReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != ACTION_SCAN_RESULT) return
 
-            occupied = intent.getIntExtra("occupied", 0)
-            empty = intent.getIntExtra("empty", 64)
+            occupied = intent.getIntExtra("occupied", -1)
+            empty = intent.getIntExtra("empty", -1)
             confidence = intent.getFloatExtra("confidence", 0f)
             boardData = intent.getStringExtra("board") ?: ""
-            scanMessage = "Board scan received"
+
+            pieceCount = intent.getIntExtra("pieceCount", 0)
+            piecesData = intent.getStringExtra("pieces") ?: ""
+            pieceConfidence = intent.getFloatExtra("pieceConfidence", 0f)
+
+            scanMessage = "Scan result received"
         }
     }
 
@@ -105,7 +113,10 @@ class MainActivity : ComponentActivity() {
                     empty = empty,
                     confidence = confidence,
                     scanMessage = scanMessage,
-                    boardData = boardData
+                    boardData = boardData,
+                    pieceCount = pieceCount,
+                    piecesData = piecesData,
+                    pieceConfidence = pieceConfidence
                 )
             }
         }
@@ -126,7 +137,10 @@ fun BlockMeHome(
     empty: Int,
     confidence: Float,
     scanMessage: String,
-    boardData: String
+    boardData: String,
+    pieceCount: Int,
+    piecesData: String,
+    pieceConfidence: Float
 ) {
     val green = Color(0xFF20D900)
     val red = Color(0xFFFF2525)
@@ -149,7 +163,8 @@ fun BlockMeHome(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(vertical = 8.dp),
+                .padding(vertical = 8.dp)
+                .padding(bottom = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
@@ -230,12 +245,16 @@ fun BlockMeHome(
             }
 
             Surface(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false),
                 color = Color(0xE8172535),
                 shape = RoundedCornerShape(18.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier
+                        .padding(14.dp)
+                        .heightIn(max = 420.dp),
                     verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Text(
@@ -264,9 +283,9 @@ fun BlockMeHome(
                     )
 
                     Text(
-                        "Confidence: ${"%.1f".format(confidence * 100)}%",
+                        "Board confidence: ${"%.1f".format(confidence * 100)}%",
                         color = Color.White,
-                        fontSize = 17.sp
+                        fontSize = 15.sp
                     )
 
                     if (boardData.length == 64) {
@@ -275,6 +294,7 @@ fun BlockMeHome(
                             color = Color(0xFF80FF80),
                             fontWeight = FontWeight.Bold
                         )
+
                         Text(
                             boardData.chunked(8).joinToString("\n") {
                                 it.map { cell ->
@@ -284,6 +304,79 @@ fun BlockMeHome(
                             color = Color.White,
                             fontSize = 17.sp,
                             lineHeight = 22.sp
+                        )
+                    }
+
+                    HorizontalDivider(color = Color.Gray)
+
+                    Text(
+                        "PIECE DETECTION",
+                        color = Color(0xFFFFE082),
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Black
+                    )
+
+                    Text(
+                        "Detected pieces: $pieceCount / 3",
+                        color = Color.White,
+                        fontSize = 17.sp
+                    )
+
+                    Text(
+                        "Piece confidence: ${"%.1f".format(pieceConfidence * 100)}%",
+                        color = Color.White,
+                        fontSize = 15.sp
+                    )
+
+                    if (piecesData.isNotBlank()) {
+                        val pieces = piecesData.split("|")
+
+                        pieces.forEachIndexed { index, piece ->
+                            val cells = piece.split(";")
+                                .mapNotNull { value ->
+                                    val parts = value.split(",")
+                                    if (parts.size != 2) null
+                                    else {
+                                        val row = parts[0].toIntOrNull()
+                                        val col = parts[1].toIntOrNull()
+                                        if (row == null || col == null) null
+                                        else Cell(row, col)
+                                    }
+                                }
+
+                            Text(
+                                "Piece ${index + 1}: ${cells.size} cells",
+                                color = Color(0xFF80FF80),
+                                fontWeight = FontWeight.Bold
+                            )
+
+                            if (cells.isNotEmpty()) {
+                                val rows = (cells.maxOf { it.row } + 1)
+                                    .coerceAtMost(8)
+                                val cols = (cells.maxOf { it.col } + 1)
+                                    .coerceAtMost(8)
+
+                                Column {
+                                    for (r in 0 until rows) {
+                                        Text(
+                                            (0 until cols).joinToString(" ") { c ->
+                                                if (cells.any {
+                                                    it.row == r && it.col == c
+                                                }) "■" else "·"
+                                            },
+                                            color = Color.White,
+                                            fontSize = 18.sp,
+                                            lineHeight = 21.sp
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            "Waiting for three pieces...",
+                            color = Color.LightGray,
+                            fontSize = 14.sp
                         )
                     }
                 }
