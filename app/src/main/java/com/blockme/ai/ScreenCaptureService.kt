@@ -30,10 +30,11 @@ class ScreenCaptureService : Service() {
         private const val TAG = "BlockMeAI"
         private const val CHANNEL_ID = "blockme_capture"
         private const val NOTIFICATION_ID = 101
-        private const val SCAN_INTERVAL = 500L
-        private const val ACTION_COOLDOWN = 1200L
 
-        // BoardDetection-এর একই বোর্ড অবস্থান
+        private const val SCAN_INTERVAL = 500L
+        private const val ACTION_COOLDOWN = 1500L
+        private const val MOVE_TIMEOUT = 6000L
+
         private const val BOARD_LEFT_RATIO = 0.0649f
         private const val BOARD_TOP_RATIO = 0.2556f
         private const val BOARD_WIDTH_RATIO = 0.8745f
@@ -47,8 +48,20 @@ class ScreenCaptureService : Service() {
 
     private var lastScanTime = 0L
     private var lastActionTime = 0L
-    private var lastActionSignature = ""
+
+    @Volatile
+    private var pendingSignature = ""
+
+    @Volatile
+    private var pendingGesture = false
+
+    @Volatile
+    private var gestureResult: GestureResult? = null
+
+    @Volatile
     private var isStopping = false
+
+    private var pendingSince = 0L
 
     override fun onStartCommand(
         intent: Intent?,
@@ -242,16 +255,57 @@ class ScreenCaptureService : Service() {
     ): String {
 
         val signature = "$boardString#$piecesString"
-
-        // একই স্ক্রিনে একই চাল বারবার পাঠানো যাবে না।
-        if (signature == lastActionSignature) {
-            return "Waiting for the previous move to update the board"
-        }
-
         val now = System.currentTimeMillis()
 
+        // আগের Gesture এখনো চলছে।
+        if (pendingGesture) {
+            return "AI drag is in progress"
+        }
+
+        // Gesture শেষ হয়েছে কি না এবং বোর্ড আপডেট হয়েছে কি না।
+        if (pendingSignature.isNotEmpty()) {
+
+            val result = gestureResult
+
+            if (result == GestureResult.CANCELLED ||
+                result == GestureResult.REJECTED
+            ) {
+                Log.w(TAG, "Previous gesture failed: $result")
+
+                pendingSignature = ""
+                gestureResult = null
+                pendingSince = 0L
+
+                return "Previous drag failed; preparing to retry"
+            }
+
+            if (signature != pendingSignature) {
+                Log.i(TAG, "Board changed after drag")
+
+                pendingSignature = ""
+                gestureResult = null
+                pendingSince = 0L
+            } else {
+                if (now - pendingSince < MOVE_TIMEOUT) {
+                    return when (result) {
+                        GestureResult.COMPLETED ->
+                            "Drag completed; verifying board update"
+
+                        else ->
+                            "Waiting for drag completion"
+                    }
+                }
+
+                Log.w(TAG, "Board did not change after drag")
+
+                pendingSignature = ""
+                gestureResult = null
+                pendingSince = 0L
+            }
+        }
+
         if (now - lastActionTime < ACTION_COOLDOWN) {
-            return "Waiting for the previous action"
+            return "Waiting for action cooldown"
         }
 
         if (!GameTouchController.isConnected()) {
@@ -276,10 +330,9 @@ class ScreenCaptureService : Service() {
             return "Invalid piece selected by solver"
         }
 
-        // এই সংস্করণে Rotation করা হচ্ছে না।
-        // ভুল Rotation Gesture পাঠানো থেকে বিরত রাখা হচ্ছে।
+        // Rotation support এখনো যাচাই করা হয়নি।
         if (move.rotation != 0) {
-            return "AI needs ${move.rotation} degree rotation; waiting for rotation support"
+            return "AI needs ${move.rotation} degree rotation; rotation support pending"
         }
 
         val selectedPiece = detectedPieces[move.pieceIndex]
@@ -293,11 +346,6 @@ class ScreenCaptureService : Service() {
 
         val sourceX = selectedPiece.centerX
         val sourceY = selectedPiece.centerY
-
-        val minRow = selectedPiece.cells.minOf { it.row }
-        val maxRow = selectedPiece.cells.maxOf { it.row }
-        val minCol = selectedPiece.cells.minOf { it.col }
-        val maxCol = selectedPiece.cells.maxOf { it.col }
 
         val averageRow = selectedPiece.cells
             .map { it.row }
@@ -323,7 +371,6 @@ class ScreenCaptureService : Service() {
         val destinationY =
             boardTop + (move.row + averageRow + 0.5f) * cellSize
 
-        // গন্তব্য বোর্ডের বাইরে হলে কোনো Gesture পাঠানো হবে না।
         if (
             destinationX !in boardLeft..boardRight ||
             destinationY !in boardTop..boardBottom
@@ -338,32 +385,52 @@ class ScreenCaptureService : Service() {
             return "Piece source position is outside the screen"
         }
 
-        // একটি মাত্র Drag পাঠানো হচ্ছে।
-        val accepted = GameTouchController.swipe(
+        // নতুন Drag শুরু করার আগে pending state সেট করা।
+        pendingSignature = signature
+        pendingGesture = true
+        gestureResult = null
+        pendingSince = now
+        lastActionTime = now
+
+        val accepted = GameTouchController.swipeWithCallback(
             startX = sourceX,
             startY = sourceY,
             endX = destinationX,
             endY = destinationY,
             duration = 650L
-        )
+        ) { result ->
 
-        if (!accepted) {
-            return "Drag gesture was not accepted"
+            handler.post {
+                pendingGesture = false
+                gestureResult = result
+
+                Log.i(TAG, "Gesture callback: $result")
+
+                if (result != GestureResult.COMPLETED) {
+                    Log.w(TAG, "Drag did not complete successfully")
+                }
+            }
         }
 
-        lastActionSignature = signature
-        lastActionTime = now
+        if (!accepted) {
+            pendingGesture = false
+            pendingSignature = ""
+            gestureResult = GestureResult.REJECTED
+            pendingSince = 0L
+
+            return "Drag gesture was rejected"
+        }
 
         Log.i(
             TAG,
-            "Drag sent: piece=${move.pieceIndex}, " +
+            "Drag dispatched: piece=${move.pieceIndex}, " +
                 "row=${move.row}, col=${move.col}, " +
                 "rotation=${move.rotation}, " +
                 "source=($sourceX,$sourceY), " +
                 "destination=($destinationX,$destinationY)"
         )
 
-        return "AI drag sent; waiting for board update"
+        return "AI drag dispatched; waiting for completion and board update"
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {
@@ -399,6 +466,7 @@ class ScreenCaptureService : Service() {
                     image.width,
                     image.height
                 )
+
                 paddedBitmap.recycle()
                 cropped
             }
@@ -441,6 +509,7 @@ class ScreenCaptureService : Service() {
         }
 
         super.onDestroy()
+
         Log.i(TAG, "BlockMe AI service destroyed")
     }
 
