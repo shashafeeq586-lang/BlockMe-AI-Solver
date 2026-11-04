@@ -31,6 +31,12 @@ class ScreenCaptureService : Service() {
         private const val CHANNEL_ID = "blockme_capture"
         private const val NOTIFICATION_ID = 101
         private const val SCAN_INTERVAL = 500L
+        private const val ACTION_COOLDOWN = 1200L
+
+        // BoardDetection-এর একই বোর্ড অবস্থান
+        private const val BOARD_LEFT_RATIO = 0.0649f
+        private const val BOARD_TOP_RATIO = 0.2556f
+        private const val BOARD_WIDTH_RATIO = 0.8745f
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -38,7 +44,10 @@ class ScreenCaptureService : Service() {
     private var imageReader: ImageReader? = null
 
     private val handler = Handler(Looper.getMainLooper())
+
     private var lastScanTime = 0L
+    private var lastActionTime = 0L
+    private var lastActionSignature = ""
     private var isStopping = false
 
     override fun onStartCommand(
@@ -65,7 +74,7 @@ class ScreenCaptureService : Service() {
 
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("BlockMe AI Solver")
-            .setContentText("Screen capture and AI scanning are running")
+            .setContentText("AI scanning and move planning")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
@@ -101,6 +110,7 @@ class ScreenCaptureService : Service() {
             )
 
             imageReader?.setOnImageAvailableListener({ reader ->
+
                 val image = try {
                     reader.acquireLatestImage()
                 } catch (e: Exception) {
@@ -174,6 +184,22 @@ class ScreenCaptureService : Service() {
                 }
             } ?: ""
 
+            var aiStatus = "Waiting for board and three pieces"
+
+            if (
+                boardResult != null &&
+                pieceResult != null &&
+                pieceResult.pieces.size == 3
+            ) {
+                aiStatus = processAiMove(
+                    bitmap = bitmap,
+                    board = boardResult.board,
+                    detectedPieces = pieceResult.pieces,
+                    boardString = boardString,
+                    piecesString = piecesString
+                )
+            }
+
             val update = Intent(
                 MainActivity.ACTION_SCAN_RESULT
             ).apply {
@@ -187,6 +213,8 @@ class ScreenCaptureService : Service() {
                 putExtra("pieceCount", pieceResult?.pieces?.size ?: 0)
                 putExtra("pieces", piecesString)
                 putExtra("pieceConfidence", pieceResult?.confidence ?: 0f)
+
+                putExtra("aiStatus", aiStatus)
             }
 
             sendBroadcast(update)
@@ -195,7 +223,7 @@ class ScreenCaptureService : Service() {
                 TAG,
                 "Board: ${boardResult?.occupiedCount ?: "Not detected"}, " +
                     "Pieces: ${pieceResult?.pieces?.size ?: 0}, " +
-                    "Piece data: $piecesString"
+                    "AI: $aiStatus"
             )
 
         } catch (e: Exception) {
@@ -203,6 +231,139 @@ class ScreenCaptureService : Service() {
         } finally {
             bitmap.recycle()
         }
+    }
+
+    private fun processAiMove(
+        bitmap: Bitmap,
+        board: List<List<Boolean>>,
+        detectedPieces: List<DetectedPiece>,
+        boardString: String,
+        piecesString: String
+    ): String {
+
+        val signature = "$boardString#$piecesString"
+
+        // একই স্ক্রিনে একই চাল বারবার পাঠানো যাবে না।
+        if (signature == lastActionSignature) {
+            return "Waiting for the previous move to update the board"
+        }
+
+        val now = System.currentTimeMillis()
+
+        if (now - lastActionTime < ACTION_COOLDOWN) {
+            return "Waiting for the previous action"
+        }
+
+        if (!GameTouchController.isConnected()) {
+            return "Enable BlockMe AI Touch Control in Accessibility settings"
+        }
+
+        val solverPieces = detectedPieces.map {
+            Piece(it.cells)
+        }
+
+        val solution = try {
+            PuzzleSolver.solve(board, solverPieces)
+        } catch (e: Exception) {
+            Log.e(TAG, "Puzzle solving failed", e)
+            null
+        } ?: return "No legal move found"
+
+        val move = solution.moves.firstOrNull()
+            ?: return "No move available"
+
+        if (move.pieceIndex !in detectedPieces.indices) {
+            return "Invalid piece selected by solver"
+        }
+
+        // এই সংস্করণে Rotation করা হচ্ছে না।
+        // ভুল Rotation Gesture পাঠানো থেকে বিরত রাখা হচ্ছে।
+        if (move.rotation != 0) {
+            return "AI needs ${move.rotation} degree rotation; waiting for rotation support"
+        }
+
+        val selectedPiece = detectedPieces[move.pieceIndex]
+
+        if (
+            selectedPiece.cells.isEmpty() ||
+            selectedPiece.tileSize <= 0f
+        ) {
+            return "Selected piece coordinates are invalid"
+        }
+
+        val sourceX = selectedPiece.centerX
+        val sourceY = selectedPiece.centerY
+
+        val minRow = selectedPiece.cells.minOf { it.row }
+        val maxRow = selectedPiece.cells.maxOf { it.row }
+        val minCol = selectedPiece.cells.minOf { it.col }
+        val maxCol = selectedPiece.cells.maxOf { it.col }
+
+        val averageRow = selectedPiece.cells
+            .map { it.row }
+            .average()
+            .toFloat()
+
+        val averageCol = selectedPiece.cells
+            .map { it.col }
+            .average()
+            .toFloat()
+
+        val boardLeft = bitmap.width * BOARD_LEFT_RATIO
+        val boardTop = bitmap.height * BOARD_TOP_RATIO
+        val boardSize = bitmap.width * BOARD_WIDTH_RATIO
+        val cellSize = boardSize / 8f
+
+        val boardRight = boardLeft + boardSize
+        val boardBottom = boardTop + boardSize
+
+        val destinationX =
+            boardLeft + (move.col + averageCol + 0.5f) * cellSize
+
+        val destinationY =
+            boardTop + (move.row + averageRow + 0.5f) * cellSize
+
+        // গন্তব্য বোর্ডের বাইরে হলে কোনো Gesture পাঠানো হবে না।
+        if (
+            destinationX !in boardLeft..boardRight ||
+            destinationY !in boardTop..boardBottom
+        ) {
+            return "AI destination is outside the board"
+        }
+
+        if (
+            sourceX !in 0f..bitmap.width.toFloat() ||
+            sourceY !in 0f..bitmap.height.toFloat()
+        ) {
+            return "Piece source position is outside the screen"
+        }
+
+        // একটি মাত্র Drag পাঠানো হচ্ছে।
+        val accepted = GameTouchController.swipe(
+            startX = sourceX,
+            startY = sourceY,
+            endX = destinationX,
+            endY = destinationY,
+            duration = 650L
+        )
+
+        if (!accepted) {
+            return "Drag gesture was not accepted"
+        }
+
+        lastActionSignature = signature
+        lastActionTime = now
+
+        Log.i(
+            TAG,
+            "Drag sent: piece=${move.pieceIndex}, " +
+                "row=${move.row}, col=${move.col}, " +
+                "rotation=${move.rotation}, " +
+                "source=($sourceX,$sourceY), " +
+                "destination=($destinationX,$destinationY)"
+        )
+
+        return "AI drag sent; waiting for board update"
     }
 
     private fun imageToBitmap(image: Image): Bitmap? {
