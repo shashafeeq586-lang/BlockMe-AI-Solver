@@ -1,3 +1,4 @@
+
 package com.blockme.ai
 
 import android.graphics.Bitmap
@@ -19,211 +20,206 @@ data class PieceScanResult(
 
 object PieceDetection {
 
-    private const val MIN_COMPONENT_PIXELS = 20
+    private const val REFERENCE_WIDTH = 709f
+    private const val TILE_RATIO = 0.041f
+
+    private data class Slot(
+        val centerX: Float,
+        val top: Float,
+        val bottom: Float
+    )
+
+    private data class GridResult(
+        val cells: List<Cell>,
+        val confidence: Float,
+        val color: Int
+    )
 
     fun scan(bitmap: Bitmap): PieceScanResult? {
-        if (bitmap.width < 100 || bitmap.height < 200) {
-            return null
+        if (bitmap.width < 100 || bitmap.height < 200) return null
+
+        val scaleX = bitmap.width / REFERENCE_WIDTH
+        val scaleY = bitmap.height / 1536f
+        val tile = bitmap.width * TILE_RATIO
+
+        val slots = listOf(
+            Slot(0.175f, 0.70f, 0.83f),
+            Slot(0.501f, 0.70f, 0.83f),
+            Slot(0.828f, 0.70f, 0.83f)
+        )
+
+        val pieces = mutableListOf<DetectedPiece>()
+        var confidenceTotal = 0f
+
+        for (slot in slots) {
+            val centerX = slot.centerX * bitmap.width
+            val top = slot.top * bitmap.height
+            val bottom = slot.bottom * bitmap.height
+
+            val result = findGrid(
+                bitmap,
+                centerX,
+                top,
+                bottom,
+                tile
+            ) ?: return null
+
+            if (result.cells.isEmpty()) return null
+
+            pieces.add(
+                DetectedPiece(
+                    cells = result.cells,
+                    centerX = centerX,
+                    centerY = (top + bottom) / 2f,
+                    color = result.color
+                )
+            )
+
+            confidenceTotal += result.confidence
         }
 
-        val width = bitmap.width
-        val height = bitmap.height
+        return PieceScanResult(
+            pieces = pieces,
+            confidence = confidenceTotal / 3f
+        )
+    }
 
-        // বোর্ডের নিচের অংশে থাকা তিনটি ব্লক খুঁজবে।
-        val startY = (height * 0.66f).toInt()
-        val endY = (height * 0.94f).toInt()
+    private fun findGrid(
+        bitmap: Bitmap,
+        centerX: Float,
+        top: Float,
+        bottom: Float,
+        tile: Float
+    ): GridResult? {
 
-        val step = 2
-        val maskWidth = (width + step - 1) / step
-        val maskHeight = (endY - startY + step - 1) / step
+        var bestCells = emptyList<Cell>()
+        var bestScore = 0f
+        var bestColor = Color.TRANSPARENT
 
-        if (maskWidth <= 0 || maskHeight <= 0) {
-            return null
-        }
+        val startX = centerX - tile * 2.5f
 
-        val mask = BooleanArray(maskWidth * maskHeight)
+        var offsetY = 0
+        while (offsetY < tile.toInt()) {
+            var offsetX = 0
 
-        for (my in 0 until maskHeight) {
-            for (mx in 0 until maskWidth) {
-                val x = mx * step
-                val y = startY + my * step
+            while (offsetX < tile.toInt()) {
+                val found = mutableListOf<Cell>()
+                var score = 0f
+                var colorTotal = 0L
+                var colorSamples = 0
 
-                if (x >= width || y >= endY) continue
+                for (row in 0 until 6) {
+                    val cellY = top + offsetY + (row + 0.5f) * tile
 
-                val pixel = bitmap.getPixel(x, y)
+                    if (cellY > bottom) continue
 
-                mask[my * maskWidth + mx] =
-                    isBlockColor(pixel)
-            }
-        }
+                    for (col in 0 until 5) {
+                        val cellX = startX + offsetX + (col + 0.5f) * tile
 
-        val visited = BooleanArray(mask.size)
-        val components = mutableListOf<List<Int>>()
+                        val ratio = sampleCell(
+                            bitmap,
+                            cellX,
+                            cellY,
+                            tile
+                        )
 
-        for (y in 0 until maskHeight) {
-            for (x in 0 until maskWidth) {
-
-                val index = y * maskWidth + x
-
-                if (!mask[index] || visited[index]) {
-                    continue
-                }
-
-                val component = mutableListOf<Int>()
-                val queue = ArrayDeque<Int>()
-
-                queue.add(index)
-                visited[index] = true
-
-                while (queue.isNotEmpty()) {
-                    val current = queue.removeFirst()
-                    component.add(current)
-
-                    val cx = current % maskWidth
-                    val cy = current / maskWidth
-
-                    val neighbors = intArrayOf(
-                        if (cx > 0) current - 1 else -1,
-                        if (cx < maskWidth - 1) current + 1 else -1,
-                        if (cy > 0) current - maskWidth else -1,
-                        if (cy < maskHeight - 1)
-                            current + maskWidth else -1
-                    )
-
-                    for (next in neighbors) {
-                        if (next >= 0 &&
-                            mask[next] &&
-                            !visited[next]
-                        ) {
-                            visited[next] = true
-                            queue.add(next)
+                        if (ratio.first > 0.38f) {
+                            found.add(Cell(row, col))
+                            score += ratio.first
+                            colorTotal += ratio.second.toLong()
+                            colorSamples++
                         }
                     }
                 }
 
-                if (component.size >= MIN_COMPONENT_PIXELS) {
-                    components.add(component)
-                }
-            }
-        }
-
-        val detected = components
-            .mapNotNull { component ->
-                createPiece(
-                    bitmap,
-                    component,
-                    maskWidth,
-                    startY,
-                    step
-                )
-            }
-            .sortedBy { it.centerX }
-
-        if (detected.size != 3) {
-            return null
-        }
-
-        return PieceScanResult(
-            pieces = detected,
-            confidence = 1f
-        )
-    }
-
-    private fun isBlockColor(pixel: Int): Boolean {
-        val red = Color.red(pixel)
-        val green = Color.green(pixel)
-        val blue = Color.blue(pixel)
-
-        val brightness = max(red, max(green, blue))
-        val saturation =
-            brightness - min(red, min(green, blue))
-
-        return brightness > 120 && saturation > 65
-    }
-
-    private fun createPiece(
-        bitmap: Bitmap,
-        component: List<Int>,
-        maskWidth: Int,
-        startY: Int,
-        step: Int
-    ): DetectedPiece? {
-
-        val xs = component.map { it % maskWidth }
-        val ys = component.map { it / maskWidth }
-
-        val minX = xs.minOrNull() ?: return null
-        val maxX = xs.maxOrNull() ?: return null
-        val minY = ys.minOrNull() ?: return null
-        val maxY = ys.maxOrNull() ?: return null
-
-        val cellSize = estimateCellSize(
-            maxX - minX + 1,
-            maxY - minY + 1,
-            step
-        )
-
-        if (cellSize <= 0f) return null
-
-        val rawCells = mutableListOf<Pair<Int, Int>>()
-
-        for (y in minY..maxY) {
-            for (x in minX..maxX) {
-
-                val occupied = component.any { index ->
-                    index % maskWidth == x &&
-                        index / maskWidth == y
+                if (found.size in 1..8 && score > bestScore) {
+                    bestScore = score
+                    bestCells = found
+                    bestColor = if (colorSamples > 0) {
+                        Color.rgb(
+                            ((colorTotal / colorSamples) shr 16).toInt(),
+                            ((colorTotal / colorSamples) shr 8 and 255).toInt(),
+                            (colorTotal / colorSamples and 255).toInt()
+                        )
+                    } else {
+                        Color.TRANSPARENT
+                    }
                 }
 
-                if (occupied) {
-                    rawCells.add(x to y)
-                }
+                offsetX += 2
             }
+
+            offsetY += 2
         }
 
-        if (rawCells.isEmpty()) return null
+        if (bestCells.isEmpty()) return null
 
-        val cellGroups = mutableSetOf<Pair<Int, Int>>()
+        val minRow = bestCells.minOf { it.row }
+        val minCol = bestCells.minOf { it.col }
 
-        for ((x, y) in rawCells) {
-            val col = ((x - minX) * step / cellSize).toInt()
-            val row = ((y - minY) * step / cellSize).toInt()
-            cellGroups.add(row to col)
-        }
-
-        val minRow = cellGroups.minOf { it.first }
-        val minCol = cellGroups.minOf { it.second }
-
-        val cells = cellGroups.map { (row, col) ->
-            Cell(row - minRow, col - minCol)
+        val normalized = bestCells.map {
+            Cell(it.row - minRow, it.col - minCol)
         }.distinct().sortedWith(
             compareBy<Cell> { it.row }.thenBy { it.col }
         )
 
-        val centerX =
-            ((minX + maxX) / 2f) * step
-
-        val centerY =
-            startY + ((minY + maxY) / 2f) * step
-
-        val color = bitmap.getPixel(
-            (centerX.toInt()).coerceIn(0, bitmap.width - 1),
-            (centerY.toInt()).coerceIn(0, bitmap.height - 1)
-        )
-
-        return DetectedPiece(
-            cells = cells,
-            centerX = centerX,
-            centerY = centerY,
-            color = color
+        return GridResult(
+            cells = normalized,
+            confidence = (bestScore / normalized.size).coerceIn(0f, 1f),
+            color = bestColor
         )
     }
 
-    private fun estimateCellSize(
-        width: Int,
-        height: Int,
-        step: Int
-    ): Float {
-        return max(width, height).toFloat() * step / 4f
+    private fun sampleCell(
+        bitmap: Bitmap,
+        centerX: Float,
+        centerY: Float,
+        tile: Float
+    ): Pair<Float, Int> {
+
+        val radius = (tile * 0.28f).toInt()
+        var colored = 0
+        var total = 0
+        var redTotal = 0L
+        var greenTotal = 0L
+        var blueTotal = 0L
+
+        for (dy in -radius..radius step 2) {
+            for (dx in -radius..radius step 2) {
+                val x = centerX.toInt() + dx
+                val y = centerY.toInt() + dy
+
+                if (x !in 0 until bitmap.width ||
+                    y !in 0 until bitmap.height
+                ) continue
+
+                val pixel = bitmap.getPixel(x, y)
+                val r = Color.red(pixel)
+                val g = Color.green(pixel)
+                val b = Color.blue(pixel)
+
+                val brightness = max(r, max(g, b))
+                val saturation = brightness - min(r, min(g, b))
+
+                if (brightness > 175 && saturation > 70) {
+                    colored++
+                    redTotal += r
+                    greenTotal += g
+                    blueTotal += b
+                }
+
+                total++
+            }
+        }
+
+        if (total == 0 || colored == 0) return 0f to 0
+
+        val averageColor = Color.rgb(
+            (redTotal / colored).toInt(),
+            (greenTotal / colored).toInt(),
+            (blueTotal / colored).toInt()
+        )
+
+        return colored.toFloat() / total to averageColor
     }
 }
