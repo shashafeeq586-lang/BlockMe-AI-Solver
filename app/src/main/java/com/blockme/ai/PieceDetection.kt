@@ -1,4 +1,3 @@
-
 package com.blockme.ai
 
 import android.graphics.Bitmap
@@ -10,7 +9,8 @@ data class DetectedPiece(
     val cells: List<Cell>,
     val centerX: Float,
     val centerY: Float,
-    val color: Int
+    val color: Int,
+    val tileSize: Float = 0f
 )
 
 data class PieceScanResult(
@@ -20,7 +20,6 @@ data class PieceScanResult(
 
 object PieceDetection {
 
-    private const val REFERENCE_WIDTH = 709f
     private const val TILE_RATIO = 0.041f
 
     private data class Slot(
@@ -32,14 +31,14 @@ object PieceDetection {
     private data class GridResult(
         val cells: List<Cell>,
         val confidence: Float,
-        val color: Int
+        val color: Int,
+        val centerX: Float,
+        val centerY: Float
     )
 
     fun scan(bitmap: Bitmap): PieceScanResult? {
         if (bitmap.width < 100 || bitmap.height < 200) return null
 
-        val scaleX = bitmap.width / REFERENCE_WIDTH
-        val scaleY = bitmap.height / 1536f
         val tile = bitmap.width * TILE_RATIO
 
         val slots = listOf(
@@ -69,9 +68,10 @@ object PieceDetection {
             pieces.add(
                 DetectedPiece(
                     cells = result.cells,
-                    centerX = centerX,
-                    centerY = (top + bottom) / 2f,
-                    color = result.color
+                    centerX = result.centerX,
+                    centerY = result.centerY,
+                    color = result.color,
+                    tileSize = tile
                 )
             )
 
@@ -95,10 +95,13 @@ object PieceDetection {
         var bestCells = emptyList<Cell>()
         var bestScore = 0f
         var bestColor = Color.TRANSPARENT
+        var bestCenterX = centerX
+        var bestCenterY = (top + bottom) / 2f
 
         val startX = centerX - tile * 2.5f
 
         var offsetY = 0
+
         while (offsetY < tile.toInt()) {
             var offsetX = 0
 
@@ -107,14 +110,18 @@ object PieceDetection {
                 var score = 0f
                 var colorTotal = 0L
                 var colorSamples = 0
+                var sumX = 0f
+                var sumY = 0f
 
                 for (row in 0 until 6) {
-                    val cellY = top + offsetY + (row + 0.5f) * tile
+                    val cellY =
+                        top + offsetY + (row + 0.5f) * tile
 
                     if (cellY > bottom) continue
 
                     for (col in 0 until 5) {
-                        val cellX = startX + offsetX + (col + 0.5f) * tile
+                        val cellX =
+                            startX + offsetX + (col + 0.5f) * tile
 
                         val ratio = sampleCell(
                             bitmap,
@@ -128,6 +135,8 @@ object PieceDetection {
                             score += ratio.first
                             colorTotal += ratio.second.toLong()
                             colorSamples++
+                            sumX += cellX
+                            sumY += cellY
                         }
                     }
                 }
@@ -135,6 +144,9 @@ object PieceDetection {
                 if (found.size in 1..8 && score > bestScore) {
                     bestScore = score
                     bestCells = found
+                    bestCenterX = sumX / found.size
+                    bestCenterY = sumY / found.size
+
                     bestColor = if (colorSamples > 0) {
                         Color.rgb(
                             ((colorTotal / colorSamples) shr 16).toInt(),
@@ -166,7 +178,9 @@ object PieceDetection {
         return GridResult(
             cells = normalized,
             confidence = (bestScore / normalized.size).coerceIn(0f, 1f),
-            color = bestColor
+            color = bestColor,
+            centerX = bestCenterX,
+            centerY = bestCenterY
         )
     }
 
@@ -189,7 +203,8 @@ object PieceDetection {
                 val x = centerX.toInt() + dx
                 val y = centerY.toInt() + dy
 
-                if (x !in 0 until bitmap.width ||
+                if (
+                    x !in 0 until bitmap.width ||
                     y !in 0 until bitmap.height
                 ) continue
 
