@@ -162,6 +162,24 @@ class ScreenCaptureService : Service() {
             val result = BoardDetection.scan(bitmap)
 
             if (result != null) {
+                val boardString = result.board.joinToString("") { row ->
+                    row.joinToString("") { cell ->
+                        if (cell) "1" else "0"
+                    }
+                }
+
+                val update = Intent(
+                    MainActivity.ACTION_SCAN_RESULT
+                ).apply {
+                    setPackage(packageName)
+                    putExtra("occupied", result.occupiedCount)
+                    putExtra("empty", result.emptyCount)
+                    putExtra("confidence", result.confidence)
+                    putExtra("board", boardString)
+                }
+
+                sendBroadcast(update)
+
                 Log.i(
                     TAG,
                     "Board detected: occupied=${result.occupiedCount}, " +
