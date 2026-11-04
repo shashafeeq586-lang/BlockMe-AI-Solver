@@ -65,7 +65,7 @@ class ScreenCaptureService : Service() {
 
         val notification = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("BlockMe AI Solver")
-            .setContentText("Screen capture and board scanning are running")
+            .setContentText("Screen capture and AI scanning are running")
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
@@ -117,7 +117,7 @@ class ScreenCaptureService : Service() {
                             scanImage(image)
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Board scan failed", e)
+                        Log.e(TAG, "Scanning failed", e)
                     } finally {
                         image.close()
                     }
@@ -159,36 +159,47 @@ class ScreenCaptureService : Service() {
         val bitmap = imageToBitmap(image) ?: return
 
         try {
-            val result = BoardDetection.scan(bitmap)
+            val boardResult = BoardDetection.scan(bitmap)
+            val pieceResult = PieceDetection.scan(bitmap)
 
-            if (result != null) {
-                val boardString = result.board.joinToString("") { row ->
-                    row.joinToString("") { cell ->
-                        if (cell) "1" else "0"
-                    }
+            val boardString = boardResult?.board?.joinToString("") { row ->
+                row.joinToString("") { cell ->
+                    if (cell) "1" else "0"
                 }
+            } ?: ""
 
-                val update = Intent(
-                    MainActivity.ACTION_SCAN_RESULT
-                ).apply {
-                    setPackage(packageName)
-                    putExtra("occupied", result.occupiedCount)
-                    putExtra("empty", result.emptyCount)
-                    putExtra("confidence", result.confidence)
-                    putExtra("board", boardString)
+            val piecesString = pieceResult?.pieces?.joinToString("|") { piece ->
+                piece.cells.joinToString(";") { cell ->
+                    "${cell.row},${cell.col}"
                 }
+            } ?: ""
 
-                sendBroadcast(update)
+            val update = Intent(
+                MainActivity.ACTION_SCAN_RESULT
+            ).apply {
+                setPackage(packageName)
 
-                Log.i(
-                    TAG,
-                    "Board detected: occupied=${result.occupiedCount}, " +
-                        "empty=${result.emptyCount}, " +
-                        "confidence=${result.confidence}"
-                )
-            } else {
-                Log.w(TAG, "Board detection returned no result")
+                putExtra("occupied", boardResult?.occupiedCount ?: -1)
+                putExtra("empty", boardResult?.emptyCount ?: -1)
+                putExtra("confidence", boardResult?.confidence ?: 0f)
+                putExtra("board", boardString)
+
+                putExtra("pieceCount", pieceResult?.pieces?.size ?: 0)
+                putExtra("pieces", piecesString)
+                putExtra("pieceConfidence", pieceResult?.confidence ?: 0f)
             }
+
+            sendBroadcast(update)
+
+            Log.i(
+                TAG,
+                "Board: ${boardResult?.occupiedCount ?: "Not detected"}, " +
+                    "Pieces: ${pieceResult?.pieces?.size ?: 0}, " +
+                    "Piece data: $piecesString"
+            )
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Detection failed", e)
         } finally {
             bitmap.recycle()
         }
