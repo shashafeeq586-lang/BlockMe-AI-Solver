@@ -15,25 +15,27 @@ data class Move(
 data class SolveResult(val moves: List<Move>, val score: Int)
 
 object PuzzleSolver {
+
     private const val SIZE = 8
-    private const val BEAM_WIDTH = 250
+    private const val BEAM_WIDTH = 350
 
     private data class State(
         val board: Array<BooleanArray>,
         val moves: List<Move>,
-        val score: Int,
         val remaining: List<Int>,
         val totalCleared: Int,
-        val combo: Int
+        val combo: Int,
+        val orderBonus: Int
     )
 
     fun solve(
         inputBoard: List<List<Boolean>>,
         pieces: List<Piece>
     ): SolveResult? {
+
         require(inputBoard.size == SIZE)
         require(inputBoard.all { it.size == SIZE })
-        require(pieces.isNotEmpty())
+        require(pieces.size == 3)
         require(pieces.all { it.cells.isNotEmpty() })
 
         val initialBoard = Array(SIZE) { r ->
@@ -42,120 +44,169 @@ object PuzzleSolver {
 
         var beam = listOf(
             State(
-                initialBoard,
-                emptyList(),
-                0,
-                pieces.indices.toList(),
-                0,
-                0
+                board = initialBoard,
+                moves = emptyList(),
+                remaining = pieces.indices.toList(),
+                totalCleared = 0,
+                combo = 0,
+                orderBonus = 0
             )
         )
 
-        var best = beam.first()
+        var best: State? = null
 
-        repeat(pieces.size) {
+        for (depth in pieces.indices) {
             val next = mutableListOf<State>()
 
             for (state in beam) {
                 for (pieceIndex in state.remaining) {
+
                     val shapes = rotations(pieces[pieceIndex])
 
                     for ((rotation, shape) in shapes.withIndex()) {
-                        for (r in 0 until SIZE) {
-                            for (c in 0 until SIZE) {
-                                if (!canPlace(state.board, shape, r, c)) {
-                                    continue
-                                }
+                        for (row in 0 until SIZE) {
+                            for (col in 0 until SIZE) {
+
+                                if (!canPlace(
+                                        state.board,
+                                        shape,
+                                        row,
+                                        col
+                                    )
+                                ) continue
 
                                 val newBoard = copyBoard(state.board)
-                                place(newBoard, shape, r, c)
+
+                                place(newBoard, shape, row, col)
 
                                 val cleared = clearLines(newBoard)
-                                val newCombo =
-                                    if (cleared > 0) state.combo + 1 else 0
 
-                                val move = Move(
-                                    pieceIndex,
-                                    r,
-                                    c,
-                                    rotation * 90,
-                                    cleared
-                                )
+                                val newCombo =
+                                    if (cleared > 0) state.combo + 1
+                                    else 0
 
                                 val newRemaining =
                                     state.remaining - pieceIndex
 
-                                val totalCleared =
-                                    state.totalCleared + cleared
+                                val largestSize =
+                                    pieces.maxOf { it.cells.size }
 
-                                val strategicScore =
-                                    totalCleared * 100000 +
-                                    newCombo * 25000 +
-                                    newRemaining.size * 100 +
-                                    evaluateBoard(
-                                        newBoard,
-                                        pieces,
-                                        newRemaining
+                                val orderBonus =
+                                    state.orderBonus +
+                                    (
+                                        pieces[pieceIndex].cells.size *
+                                        (pieces.size - depth) * 20
                                     )
 
-                                next.add(
-                                    State(
-                                        newBoard,
-                                        state.moves + move,
-                                        strategicScore,
-                                        newRemaining,
-                                        totalCleared,
-                                        newCombo
-                                    )
+                                val move = Move(
+                                    pieceIndex = pieceIndex,
+                                    row = row,
+                                    col = col,
+                                    rotation = rotation * 90,
+                                    linesCleared = cleared
                                 )
+
+                                val candidate = State(
+                                    board = newBoard,
+                                    moves = state.moves + move,
+                                    remaining = newRemaining,
+                                    totalCleared =
+                                        state.totalCleared + cleared,
+                                    combo = newCombo,
+                                    orderBonus = orderBonus
+                                )
+
+                                next.add(candidate)
                             }
                         }
                     }
                 }
             }
 
-            if (next.isEmpty()) return@repeat
+            if (next.isEmpty()) break
 
             beam = next
-                .sortedByDescending { it.score }
+                .sortedByDescending {
+                    evaluate(it, pieces)
+                }
                 .take(BEAM_WIDTH)
 
-            val candidate = beam.maxByOrNull { it.score }
+            val candidate = beam.maxByOrNull {
+                finalScore(it, pieces)
+            }
 
             if (
                 candidate != null &&
                 (
-                    candidate.moves.size > best.moves.size ||
-                    (
-                        candidate.moves.size == best.moves.size &&
-                        candidate.score > best.score
-                    )
+                    best == null ||
+                    isBetter(candidate, best!!, pieces)
                 )
             ) {
                 best = candidate
             }
         }
 
-        val finalBest = beam.maxByOrNull { it.score }
+        val finalCandidate = beam.maxByOrNull {
+            finalScore(it, pieces)
+        }
 
         if (
-            finalBest != null &&
+            finalCandidate != null &&
             (
-                finalBest.moves.size > best.moves.size ||
-                (
-                    finalBest.moves.size == best.moves.size &&
-                    finalBest.score > best.score
-                )
+                best == null ||
+                isBetter(finalCandidate, best!!, pieces)
             )
         ) {
-            best = finalBest
+            best = finalCandidate
         }
 
-        return if (best.moves.isEmpty()) {
-            null
-        } else {
-            SolveResult(best.moves, best.score)
+        val result = best ?: return null
+
+        if (result.moves.isEmpty()) return null
+
+        return SolveResult(
+            moves = result.moves,
+            score = finalScore(result, pieces)
+        )
+    }
+
+    private fun isBetter(
+        a: State,
+        b: State,
+        pieces: List<Piece>
+    ): Boolean {
+
+        if (a.moves.size != b.moves.size) {
+            return a.moves.size > b.moves.size
         }
+
+        if (a.totalCleared != b.totalCleared) {
+            return a.totalCleared > b.totalCleared
+        }
+
+        if (a.combo != b.combo) {
+            return a.combo > b.combo
+        }
+
+        return finalScore(a, pieces) > finalScore(b, pieces)
+    }
+
+    private fun finalScore(
+        state: State,
+        pieces: List<Piece>
+    ): Int {
+        return state.moves.size * 100000 +
+            state.totalCleared * 50000 +
+            state.combo * 10000 +
+            state.orderBonus +
+            evaluateBoard(state.board)
+    }
+
+    private fun evaluate(
+        state: State,
+        pieces: List<Piece>
+    ): Int {
+        return finalScore(state, pieces)
     }
 
     private fun rotations(piece: Piece): List<List<Cell>> {
@@ -168,7 +219,9 @@ object PuzzleSolver {
             }
 
             current = normalize(
-                current.map { Cell(it.col, -it.row) }
+                current.map {
+                    Cell(it.col, -it.row)
+                }
             )
         }
 
@@ -180,10 +233,13 @@ object PuzzleSolver {
         val minCol = cells.minOf { it.col }
 
         return cells
-            .map { Cell(it.row - minRow, it.col - minCol) }
+            .map {
+                Cell(it.row - minRow, it.col - minCol)
+            }
             .distinct()
             .sortedWith(
-                compareBy<Cell> { it.row }.thenBy { it.col }
+                compareBy<Cell> { it.row }
+                    .thenBy { it.col }
             )
     }
 
@@ -193,13 +249,14 @@ object PuzzleSolver {
         row: Int,
         col: Int
     ): Boolean {
+
         return shape.all {
             val r = row + it.row
             val c = col + it.col
 
             r in 0 until SIZE &&
-            c in 0 until SIZE &&
-            !board[r][c]
+                c in 0 until SIZE &&
+                !board[r][c]
         }
     }
 
@@ -214,24 +271,29 @@ object PuzzleSolver {
         }
     }
 
-    private fun clearLines(board: Array<BooleanArray>): Int {
-        val fullRows = (0 until SIZE).filter { r ->
-            board[r].all { it }
+    private fun clearLines(
+        board: Array<BooleanArray>
+    ): Int {
+
+        val fullRows = (0 until SIZE).filter { row ->
+            board[row].all { it }
         }
 
-        val fullCols = (0 until SIZE).filter { c ->
-            (0 until SIZE).all { r -> board[r][c] }
-        }
-
-        for (r in fullRows) {
-            for (c in 0 until SIZE) {
-                board[r][c] = false
+        val fullCols = (0 until SIZE).filter { col ->
+            (0 until SIZE).all { row ->
+                board[row][col]
             }
         }
 
-        for (c in fullCols) {
-            for (r in 0 until SIZE) {
-                board[r][c] = false
+        for (row in fullRows) {
+            for (col in 0 until SIZE) {
+                board[row][col] = false
+            }
+        }
+
+        for (col in fullCols) {
+            for (row in 0 until SIZE) {
+                board[row][col] = false
             }
         }
 
@@ -239,88 +301,68 @@ object PuzzleSolver {
     }
 
     private fun evaluateBoard(
-        board: Array<BooleanArray>,
-        pieces: List<Piece>,
-        remaining: List<Int>
+        board: Array<BooleanArray>
     ): Int {
+
         var occupied = 0
-        var completedPotential = 0
-        var emptySpaces = 0
-
-        for (r in 0 until SIZE) {
-            val filled = board[r].count { it }
-            occupied += filled
-            emptySpaces += SIZE - filled
-
-            if (filled == SIZE - 1) {
-                completedPotential += 15
-            }
-        }
-
-        for (c in 0 until SIZE) {
-            var filled = 0
-
-            for (r in 0 until SIZE) {
-                if (board[r][c]) filled++
-            }
-
-            if (filled == SIZE - 1) {
-                completedPotential += 15
-            }
-        }
-
+        var almostComplete = 0
         var roughness = 0
 
-        for (r in 0 until SIZE - 1) {
-            for (c in 0 until SIZE) {
-                if (board[r][c] != board[r + 1][c]) {
+        for (row in 0 until SIZE) {
+            val filled = board[row].count { it }
+            occupied += filled
+
+            if (filled == SIZE - 1) {
+                almostComplete += 1
+            }
+        }
+
+        for (col in 0 until SIZE) {
+            var filled = 0
+
+            for (row in 0 until SIZE) {
+                if (board[row][col]) filled++
+            }
+
+            if (filled == SIZE - 1) {
+                almostComplete += 1
+            }
+        }
+
+        for (row in 0 until SIZE - 1) {
+            for (col in 0 until SIZE) {
+                if (board[row][col] != board[row + 1][col]) {
                     roughness++
                 }
             }
         }
 
-        val largestPieceSize =
-            remaining.map { pieces[it].cells.size }.maxOrNull() ?: 0
+        var emptyTwoByTwo = 0
 
-        var largestEmptyArea = 0
-
-        for (r in 0 until SIZE) {
-            for (c in 0 until SIZE) {
-                if (!board[r][c]) {
-                    var area = 0
-
-                    for (rr in r until SIZE) {
-                        for (cc in c until SIZE) {
-                            if (board[rr][cc]) {
-                                break
-                            }
-
-                            area++
-                        }
-                    }
-
-                    largestEmptyArea = maxOf(largestEmptyArea, area)
+        for (row in 0 until SIZE - 1) {
+            for (col in 0 until SIZE - 1) {
+                if (
+                    !board[row][col] &&
+                    !board[row + 1][col] &&
+                    !board[row][col + 1] &&
+                    !board[row + 1][col + 1]
+                ) {
+                    emptyTwoByTwo++
                 }
             }
         }
 
-        val spacePenalty =
-            if (largestEmptyArea < largestPieceSize) {
-                (largestPieceSize - largestEmptyArea) * 30
-            } else {
-                0
-            }
-
-        return emptySpaces * 2 +
-            completedPotential * 40 -
-            occupied * 2 -
-            roughness * 3 -
-            spacePenalty
+        return almostComplete * 400 +
+            emptyTwoByTwo * 8 -
+            occupied * 3 -
+            roughness * 2
     }
 
     private fun copyBoard(
         board: Array<BooleanArray>
     ): Array<BooleanArray> {
-        return Array(SIZE) { board[it].clone() }
+        return Array(SIZE) {
+            board[it].clone()
+        }
     }
 }
