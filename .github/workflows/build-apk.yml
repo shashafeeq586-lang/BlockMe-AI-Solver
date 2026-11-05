@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - fix/partial-piece-detection
 
 jobs:
   build:
