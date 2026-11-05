@@ -39,7 +39,7 @@ object PuzzleSolver {
 
         require(inputBoard.size == SIZE)
         require(inputBoard.all { it.size == SIZE })
-        require(pieces.size == 3)
+        require(pieces.size in 1..3)
         require(pieces.all { it.cells.isNotEmpty() })
 
         val initialBoard = Array(SIZE) { row ->
@@ -48,7 +48,7 @@ object PuzzleSolver {
             }
         }
 
-        val shapeOptions = pieces.map { rotations(it) }
+        val shapeOptions = pieces.map { listOf(RotatedShape(0, normalize(it.cells))) }
 
         var beam = listOf(
             State(
