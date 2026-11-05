@@ -61,9 +61,9 @@ object PieceDetection {
                 top,
                 bottom,
                 tile
-            ) ?: return null
+            ) ?: continue
 
-            if (result.cells.isEmpty()) return null
+            if (result.cells.isEmpty()) continue
 
             pieces.add(
                 DetectedPiece(
@@ -80,7 +80,7 @@ object PieceDetection {
 
         return PieceScanResult(
             pieces = pieces,
-            confidence = confidenceTotal / 3f
+            confidence = if (pieces.isEmpty()) 0f else confidenceTotal / pieces.size
         )
     }
 
