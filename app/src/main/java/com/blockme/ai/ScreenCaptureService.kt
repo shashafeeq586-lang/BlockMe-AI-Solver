@@ -344,8 +344,9 @@ class ScreenCaptureService : Service() {
             return "Selected piece coordinates are invalid"
         }
 
-        val sourceX = selectedPiece.centerX
-        val sourceY = selectedPiece.centerY
+        // Start on an occupied piece tile, never on an empty centroid.
+        val sourceX = selectedPiece.touchX
+        val sourceY = selectedPiece.touchY
 
         val averageRow = selectedPiece.cells
             .map { it.row }
@@ -366,10 +367,10 @@ class ScreenCaptureService : Service() {
         val boardBottom = boardTop + boardSize
 
         val destinationX =
-            boardLeft + (move.col + averageCol + 0.5f) * cellSize
+            boardLeft + (move.col + selectedPiece.anchorCol + 0.5f) * cellSize
 
         val destinationY =
-            boardTop + (move.row + averageRow + 0.5f) * cellSize
+            boardTop + (move.row + selectedPiece.anchorRow + 0.5f) * cellSize
 
         if (
             destinationX !in boardLeft..boardRight ||
@@ -397,7 +398,7 @@ class ScreenCaptureService : Service() {
             startY = sourceY,
             endX = destinationX,
             endY = destinationY,
-            duration = 650L
+            duration = 1100L
         ) { result ->
 
             handler.post {
