@@ -10,7 +10,11 @@ data class DetectedPiece(
     val centerX: Float,
     val centerY: Float,
     val color: Int,
-    val tileSize: Float = 0f
+    val tileSize: Float = 0f,
+    val touchX: Float = centerX,
+    val touchY: Float = centerY,
+    val anchorRow: Int = 0,
+    val anchorCol: Int = 0
 )
 
 data class PieceScanResult(
@@ -33,7 +37,11 @@ object PieceDetection {
         val confidence: Float,
         val color: Int,
         val centerX: Float,
-        val centerY: Float
+        val centerY: Float,
+        val touchX: Float,
+        val touchY: Float,
+        val anchorRow: Int,
+        val anchorCol: Int
     )
 
     fun scan(bitmap: Bitmap): PieceScanResult? {
@@ -71,7 +79,11 @@ object PieceDetection {
                     centerX = result.centerX,
                     centerY = result.centerY,
                     color = result.color,
-                    tileSize = tile
+                    tileSize = tile,
+                    touchX = result.touchX,
+                    touchY = result.touchY,
+                    anchorRow = result.anchorRow,
+                    anchorCol = result.anchorCol
                 )
             )
 
@@ -97,6 +109,10 @@ object PieceDetection {
         var bestColor = Color.TRANSPARENT
         var bestCenterX = centerX
         var bestCenterY = (top + bottom) / 2f
+        var bestTouchX = centerX
+        var bestTouchY = (top + bottom) / 2f
+        var bestAnchorRow = 0
+        var bestAnchorCol = 0
 
         val startX = centerX - tile * 2.5f
 
@@ -146,6 +162,11 @@ object PieceDetection {
                     bestCells = found
                     bestCenterX = sumX / found.size
                     bestCenterY = sumY / found.size
+                    val first = found.first()
+                    bestTouchX = startX + offsetX + (first.col + 0.5f) * tile
+                    bestTouchY = top + offsetY + (first.row + 0.5f) * tile
+                    bestAnchorRow = first.row - found.minOf { it.row }
+                    bestAnchorCol = first.col - found.minOf { it.col }
 
                     bestColor = if (colorSamples > 0) {
                         Color.rgb(
@@ -180,7 +201,11 @@ object PieceDetection {
             confidence = (bestScore / normalized.size).coerceIn(0f, 1f),
             color = bestColor,
             centerX = bestCenterX,
-            centerY = bestCenterY
+            centerY = bestCenterY,
+            touchX = bestTouchX,
+            touchY = bestTouchY,
+            anchorRow = bestAnchorRow,
+            anchorCol = bestAnchorCol
         )
     }
 
