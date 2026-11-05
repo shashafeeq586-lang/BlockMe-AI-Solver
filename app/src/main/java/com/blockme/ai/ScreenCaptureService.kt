@@ -197,12 +197,12 @@ class ScreenCaptureService : Service() {
                 }
             } ?: ""
 
-            var aiStatus = "Waiting for board and three pieces"
+            var aiStatus = "Waiting for board and pieces"
 
             if (
                 boardResult != null &&
                 pieceResult != null &&
-                pieceResult.pieces.size == 3
+                pieceResult.pieces.isNotEmpty()
             ) {
                 aiStatus = processAiMove(
                     bitmap = bitmap,
