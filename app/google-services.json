@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "671777070046",
+    "project_id": "blockme-ai-solver",
+    "storage_bucket": "blockme-ai-solver.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:671777070046:android:c91acf9c545af19f019b4f",
+        "android_client_info": {
+          "package_name": "com.blockme.ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCP1Nhl3aGEqDzrAR3BHGPWglpstyiHX9o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
